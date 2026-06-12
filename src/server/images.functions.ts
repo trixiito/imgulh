@@ -2,6 +2,14 @@ import { createServerFn } from '@tanstack/react-start'
 import { getStore } from '@netlify/blobs'
 
 const MAX_SIZE = 20 * 1024 * 1024 // 20 MB
+const ID_LENGTH = 7
+const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+
+function generateShortId(): string {
+  const bytes = new Uint8Array(ID_LENGTH)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => ID_CHARS[b % ID_CHARS.length]).join('')
+}
 
 export const uploadImage = createServerFn({ method: 'POST' })
   .inputValidator((data: FormData) => data)
@@ -15,7 +23,7 @@ export const uploadImage = createServerFn({ method: 'POST' })
     const buffer = await file.arrayBuffer()
     if (buffer.byteLength > MAX_SIZE) throw new Error('File exceeds 20 MB limit')
 
-    const id = crypto.randomUUID()
+    const id = generateShortId()
     const store = getStore('images')
 
     await store.set(id, buffer, {
