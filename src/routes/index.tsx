@@ -270,7 +270,7 @@ function UploadPage() {
 
         {/* Footer */}
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.7rem', letterSpacing: '0.08em', marginTop: '2rem' }}>
-          IMAGES ARE STORED SECURELY · IMGUL.COM
+          IMAGES ARE STORED SECURELY
         </p>
       </div>
 
