@@ -5,6 +5,15 @@ const MAX_SIZE = 20 * 1024 * 1024 // 20 MB
 const ID_LENGTH = 7
 const ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 
+const MIME_TO_EXT: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/avif': '.avif',
+  'image/svg+xml': '.svg',
+}
+
 function generateShortId(): string {
   const bytes = new Uint8Array(ID_LENGTH)
   crypto.getRandomValues(bytes)
@@ -23,7 +32,8 @@ export const uploadImage = createServerFn({ method: 'POST' })
     const buffer = await file.arrayBuffer()
     if (buffer.byteLength > MAX_SIZE) throw new Error('File exceeds 20 MB limit')
 
-    const id = generateShortId()
+    const ext = MIME_TO_EXT[mimeType] ?? ''
+    const id = generateShortId() + ext
     const store = getStore('images')
 
     await store.set(id, buffer, {
