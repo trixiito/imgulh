@@ -1,5 +1,5 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { uploadImage } from '@/server/images.functions'
 
 export const Route = createFileRoute('/')({
@@ -44,6 +44,24 @@ function UploadPage() {
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
     if (dropped) handleFile(dropped)
+  }, [handleFile])
+
+  // Ctrl+V / Cmd+V paste support
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault()
+          const pastedFile = item.getAsFile()
+          if (pastedFile) handleFile(pastedFile)
+          return
+        }
+      }
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
   }, [handleFile])
 
   const handleUpload = async () => {
@@ -141,7 +159,7 @@ function UploadPage() {
                     Drop your image here
                   </p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', margin: 0 }}>
-                    or click to browse — up to 20 MB
+                    click to browse or paste from clipboard
                   </p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '0.8rem', letterSpacing: '0.05em' }}>
                     JPEG · PNG · GIF · WebP · AVIF · SVG
