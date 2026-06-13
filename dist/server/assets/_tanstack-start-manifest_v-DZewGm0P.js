@@ -1,4 +1,0 @@
-const tsrStartManifest = () => ({ routes: { __root__: { filePath: "/Users/abtahi/Downloads/source-6a2c41bf8a01263f2be35099-aa5da3a69a58a7ae/src/routes/__root.tsx", children: ["/", "/view/$imageId", "/api/image/$imageId"], assets: [{ tag: "link", attrs: { rel: "stylesheet", href: "/assets/index-Cv8kq2_X.css", type: "text/css" } }], preloads: ["/assets/index-CTN3acM0.js"] }, "/": { filePath: "/Users/abtahi/Downloads/source-6a2c41bf8a01263f2be35099-aa5da3a69a58a7ae/src/routes/index.tsx", children: void 0, assets: [], preloads: ["/assets/index-y0qxTwD3.js"] }, "/view/$imageId": { filePath: "/Users/abtahi/Downloads/source-6a2c41bf8a01263f2be35099-aa5da3a69a58a7ae/src/routes/view.$imageId.tsx", children: void 0, assets: [], preloads: ["/assets/view._imageId-PnG8TdSO.js"] } }, clientEntry: "/assets/index-CTN3acM0.js" });
-export {
-  tsrStartManifest
-};

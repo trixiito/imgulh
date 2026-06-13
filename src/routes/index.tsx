@@ -1,12 +1,36 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { uploadImage } from '@/server/images.functions'
+import { uploadImage, createGallery } from '@/server/images.functions'
 
 export const Route = createFileRoute('/')({
   component: UploadPage,
 })
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml']
+const RESIZABLE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
+
+const EXPIRY_OPTIONS = [
+  { value: 'never', label: 'Never' },
+  { value: '1h', label: '1 Hour' },
+  { value: '24h', label: '24 Hours' },
+  { value: '7d', label: '7 Days' },
+  { value: '30d', label: '30 Days' },
+]
+
+const EXPIRY_DURATIONS: Record<string, number> = {
+  '1h': 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+}
+
+const DIMENSION_PRESETS = [
+  { value: 0, label: 'Original' },
+  { value: 1920, label: '1920px' },
+  { value: 1280, label: '1280px' },
+  { value: 800, label: '800px' },
+  { value: 480, label: '480px' },
+]
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -14,70 +38,275 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+interface FileEntry {
+  file: File
+  preview: string
+  id?: string // set after upload
+  status: 'pending' | 'uploading' | 'done' | 'error'
+  error?: string
+  resizedFile?: File
+  resizedSize?: number
+}
+
+function resizeImage(
+  file: File,
+  maxDimension: number,
+  quality: number
+): Promise<File> {
+  return new Promise((resolve, reject) => {
+    if (!RESIZABLE_TYPES.includes(file.type)) {
+      resolve(file)
+      return
+    }
+
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+
+      let { width, height } = img
+
+      // Skip if no resize needed
+      if (maxDimension === 0 && quality >= 100) {
+        resolve(file)
+        return
+      }
+
+      // Scale down if maxDimension is set
+      if (maxDimension > 0 && (width > maxDimension || height > maxDimension)) {
+        if (width > height) {
+          height = Math.round((height / width) * maxDimension)
+          width = maxDimension
+        } else {
+          width = Math.round((width / height) * maxDimension)
+          height = maxDimension
+        }
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve(file)
+        return
+      }
+
+      ctx.drawImage(img, 0, 0, width, height)
+
+      // Output as original type for JPEG/WebP (quality applies), PNG for others
+      const outputType = (file.type === 'image/jpeg' || file.type === 'image/webp')
+        ? file.type
+        : 'image/png'
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            resolve(file)
+            return
+          }
+          const resized = new File([blob], file.name, { type: blob.type })
+          resolve(resized)
+        },
+        outputType,
+        quality / 100
+      )
+    }
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Failed to load image for resizing'))
+    }
+
+    img.src = url
+  })
+}
+
 function UploadPage() {
   const router = useRouter()
   const [dragging, setDragging] = useState(false)
-  const [preview, setPreview] = useState<string | null>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<FileEntry[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [expiry, setExpiry] = useState('never')
+  const [maxDimension, setMaxDimension] = useState(0)
+  const [quality, setQuality] = useState(85)
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 })
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const handleFile = useCallback((f: File) => {
+  const addFiles = useCallback((newFiles: File[]) => {
     setError(null)
-    if (!ACCEPTED_TYPES.includes(f.type)) {
-      setError('Unsupported format. Please upload a JPEG, PNG, GIF, WebP, AVIF, or SVG.')
-      return
+    const entries: FileEntry[] = []
+
+    for (const f of newFiles) {
+      if (!ACCEPTED_TYPES.includes(f.type)) {
+        setError('Some files were skipped — only JPEG, PNG, GIF, WebP, AVIF, and SVG are accepted.')
+        continue
+      }
+      if (f.size > 20 * 1024 * 1024) {
+        setError('Some files were skipped — maximum size is 20 MB per file.')
+        continue
+      }
+      const preview = URL.createObjectURL(f)
+      entries.push({ file: f, preview, status: 'pending' })
     }
-    if (f.size > 20 * 1024 * 1024) {
-      setError('File exceeds the 20 MB limit.')
-      return
+
+    setFiles((prev) => [...prev, ...entries])
+  }, [])
+
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    return () => {
+      files.forEach((e) => URL.revokeObjectURL(e.preview))
     }
-    setFile(f)
-    const reader = new FileReader()
-    reader.onload = (e) => setPreview(e.target?.result as string)
-    reader.readAsDataURL(f)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => {
+      const copy = [...prev]
+      URL.revokeObjectURL(copy[index].preview)
+      copy.splice(index, 1)
+      return copy
+    })
+    setError(null)
   }, [])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
-    const dropped = e.dataTransfer.files[0]
-    if (dropped) handleFile(dropped)
-  }, [handleFile])
+    const dropped = Array.from(e.dataTransfer.files)
+    if (dropped.length > 0) addFiles(dropped)
+  }, [addFiles])
 
   // Ctrl+V / Cmd+V paste support
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items
       if (!items) return
+      const pastedFiles: File[] = []
       for (const item of items) {
         if (item.type.startsWith('image/')) {
           e.preventDefault()
-          const pastedFile = item.getAsFile()
-          if (pastedFile) handleFile(pastedFile)
-          return
+          const f = item.getAsFile()
+          if (f) pastedFiles.push(f)
         }
       }
+      if (pastedFiles.length > 0) addFiles(pastedFiles)
     }
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
-  }, [handleFile])
+  }, [addFiles])
+
+  // Apply resize when settings change
+  useEffect(() => {
+    if (files.length === 0) return
+    if (maxDimension === 0 && quality >= 100) {
+      // Clear any resized files
+      setFiles((prev) => prev.map((e) => ({ ...e, resizedFile: undefined, resizedSize: undefined })))
+      return
+    }
+
+    let cancelled = false
+
+    const processAll = async () => {
+      for (let i = 0; i < files.length; i++) {
+        if (cancelled) return
+        if (!RESIZABLE_TYPES.includes(files[i].file.type)) continue
+        try {
+          const resized = await resizeImage(files[i].file, maxDimension, quality)
+          if (cancelled) return
+          setFiles((prev) => {
+            const copy = [...prev]
+            if (copy[i]) {
+              copy[i] = { ...copy[i], resizedFile: resized, resizedSize: resized.size }
+            }
+            return copy
+          })
+        } catch {
+          // skip resize errors
+        }
+      }
+    }
+
+    processAll()
+    return () => { cancelled = true }
+  }, [maxDimension, quality, files.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async () => {
-    if (!file) return
+    if (files.length === 0) return
     setUploading(true)
     setError(null)
+    setUploadProgress({ current: 0, total: files.length })
+
+    const uploadedIds: string[] = []
+    let expiresAt: string | null = null
+
+    if (expiry !== 'never' && EXPIRY_DURATIONS[expiry]) {
+      expiresAt = new Date(Date.now() + EXPIRY_DURATIONS[expiry]).toISOString()
+    }
+
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const result = await uploadImage({ data: formData })
-      router.navigate({ to: '/view/$imageId', params: { imageId: result.id } })
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress({ current: i + 1, total: files.length })
+        setFiles((prev) => {
+          const copy = [...prev]
+          copy[i] = { ...copy[i], status: 'uploading' }
+          return copy
+        })
+
+        const fileToUpload = files[i].resizedFile ?? files[i].file
+        const formData = new FormData()
+        formData.append('file', fileToUpload)
+        formData.append('expiry', expiry)
+
+        try {
+          const result = await uploadImage({ data: formData })
+          uploadedIds.push(result.id)
+          setFiles((prev) => {
+            const copy = [...prev]
+            copy[i] = { ...copy[i], status: 'done', id: result.id }
+            return copy
+          })
+        } catch (e) {
+          setFiles((prev) => {
+            const copy = [...prev]
+            copy[i] = { ...copy[i], status: 'error', error: e instanceof Error ? e.message : 'Upload failed' }
+            return copy
+          })
+        }
+      }
+
+      if (uploadedIds.length === 0) {
+        setError('All uploads failed. Please try again.')
+        setUploading(false)
+        return
+      }
+
+      if (uploadedIds.length === 1) {
+        // Single image — go to view page
+        router.navigate({
+          to: '/view/$imageId',
+          params: { imageId: uploadedIds[0] },
+          search: expiresAt ? { expiresAt } : {},
+        })
+      } else {
+        // Multiple images — create gallery
+        const galleryData = new FormData()
+        galleryData.append('imageIds', JSON.stringify(uploadedIds))
+        galleryData.append('expiresAt', expiresAt ?? '')
+        const gallery = await createGallery({ data: galleryData })
+        router.navigate({ to: '/gallery/$galleryId', params: { galleryId: gallery.id } })
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed. Please try again.')
       setUploading(false)
     }
   }
+
+  const hasResizableFiles = files.some((e) => RESIZABLE_TYPES.includes(e.file.type))
+  const showResizeControls = files.length > 0 && hasResizableFiles
+  const isResizing = maxDimension > 0 || quality < 100
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center px-4 py-16">
@@ -121,7 +350,7 @@ function UploadPage() {
           className="glass-card"
           style={{ borderRadius: '16px', padding: '2rem', boxShadow: '0 32px 80px rgba(0,0,0,0.6)' }}
         >
-          {!file ? (
+          {files.length === 0 ? (
             <>
               {/* Drop zone */}
               <div
@@ -136,8 +365,12 @@ function UploadPage() {
                   ref={inputRef}
                   type="file"
                   accept={ACCEPTED_TYPES.join(',')}
+                  multiple
                   style={{ display: 'none' }}
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }}
+                  onChange={(e) => {
+                    const selected = e.target.files
+                    if (selected && selected.length > 0) addFiles(Array.from(selected))
+                  }}
                 />
                 <div style={{ position: 'relative', zIndex: 1 }}>
                   <div style={{ marginBottom: '1rem' }}>
@@ -156,70 +389,285 @@ function UploadPage() {
                     </svg>
                   </div>
                   <p style={{ color: 'var(--text)', fontSize: '0.95rem', margin: '0 0 0.4rem', fontWeight: 400 }}>
-                    Drop your image here
+                    Drop your images here
                   </p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.78rem', margin: 0 }}>
                     click to browse or paste from clipboard
                   </p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '0.8rem', letterSpacing: '0.05em' }}>
-                    JPEG · PNG · GIF · WebP · AVIF · SVG
+                    JPEG · PNG · GIF · WebP · AVIF · SVG · Up to 20 MB
                   </p>
                 </div>
               </div>
             </>
           ) : (
             <>
-              {/* Preview */}
-              <div style={{ borderRadius: '10px', overflow: 'hidden', marginBottom: '1.25rem', position: 'relative' }}>
-                {preview && (
-                  <img
-                    src={preview}
-                    alt="Preview"
-                    style={{ width: '100%', maxHeight: '280px', objectFit: 'contain', background: 'rgba(0,0,0,0.3)', display: 'block' }}
-                  />
+              {/* Preview grid */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: files.length === 1 ? '1fr' : 'repeat(auto-fill, minmax(140px, 1fr))',
+                gap: '0.75rem',
+                marginBottom: '1.25rem',
+              }}>
+                {files.map((entry, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      position: 'relative',
+                      borderRadius: '10px',
+                      overflow: 'hidden',
+                      border: '1px solid var(--border)',
+                      background: 'rgba(0,0,0,0.3)',
+                    }}
+                  >
+                    <img
+                      src={entry.preview}
+                      alt={entry.file.name}
+                      style={{
+                        width: '100%',
+                        height: files.length === 1 ? 'auto' : '120px',
+                        maxHeight: files.length === 1 ? '280px' : '120px',
+                        objectFit: files.length === 1 ? 'contain' : 'cover',
+                        display: 'block',
+                        opacity: entry.status === 'error' ? 0.4 : 1,
+                      }}
+                    />
+
+                    {/* Status overlay */}
+                    {entry.status === 'uploading' && (
+                      <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(8,8,16,0.7)',
+                      }}>
+                        <div style={{
+                          width: '24px', height: '24px',
+                          border: '2px solid rgba(201,168,76,0.3)',
+                          borderTopColor: 'var(--gold)',
+                          borderRadius: '50%',
+                          animation: 'spin 0.7s linear infinite',
+                        }} />
+                      </div>
+                    )}
+                    {entry.status === 'done' && (
+                      <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(8,8,16,0.5)',
+                      }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </div>
+                    )}
+
+                    {/* Remove button */}
+                    {!uploading && (
+                      <button
+                        onClick={() => removeFile(i)}
+                        style={{
+                          position: 'absolute', top: '4px', right: '4px',
+                          background: 'rgba(8,8,16,0.85)',
+                          border: '1px solid var(--border)',
+                          borderRadius: '4px',
+                          color: 'var(--text-muted)',
+                          padding: '2px 5px',
+                          cursor: 'pointer',
+                          fontSize: '0.6rem',
+                          lineHeight: 1,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+
+                    {/* File size label */}
+                    <div style={{
+                      position: 'absolute', bottom: '4px', left: '4px',
+                      background: 'rgba(8,8,16,0.8)',
+                      borderRadius: '4px',
+                      padding: '2px 6px',
+                      fontSize: '0.6rem',
+                      color: 'var(--text-muted)',
+                    }}>
+                      {isResizing && entry.resizedSize
+                        ? <><span style={{ textDecoration: 'line-through', opacity: 0.6 }}>{formatBytes(entry.file.size)}</span> → <span style={{ color: 'var(--gold-light)' }}>{formatBytes(entry.resizedSize)}</span></>
+                        : formatBytes(entry.file.size)}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Add more button */}
+                {!uploading && (
+                  <div
+                    onClick={() => inputRef.current?.click()}
+                    style={{
+                      borderRadius: '10px',
+                      border: '1px dashed var(--border)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      minHeight: files.length === 1 ? '60px' : '120px',
+                      background: 'rgba(255,255,255,0.02)',
+                      transition: 'background 0.2s ease',
+                      gap: '0.3rem',
+                    }}
+                    onMouseOver={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
+                    onMouseOut={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.5" strokeLinecap="round" style={{ opacity: 0.6 }}>
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>ADD MORE</span>
+                  </div>
                 )}
-                <button
-                  onClick={() => { setFile(null); setPreview(null); setError(null) }}
-                  style={{
-                    position: 'absolute', top: '0.6rem', right: '0.6rem',
-                    background: 'rgba(8,8,16,0.85)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '6px',
-                    color: 'var(--text-muted)',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                    fontSize: '0.7rem',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  ✕ Remove
-                </button>
               </div>
 
-              {/* File info */}
+              {/* Hidden file input for adding more */}
+              <input
+                ref={inputRef}
+                type="file"
+                accept={ACCEPTED_TYPES.join(',')}
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                  const selected = e.target.files
+                  if (selected && selected.length > 0) addFiles(Array.from(selected))
+                  if (inputRef.current) inputRef.current.value = ''
+                }}
+              />
+
+              {/* Resize controls */}
+              {showResizeControls && !uploading && (
+                <div style={{
+                  padding: '0.85rem 1rem',
+                  background: 'rgba(255,255,255,0.025)',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border)',
+                  marginBottom: '1rem',
+                }}>
+                  <p style={{
+                    margin: '0 0 0.7rem',
+                    fontSize: '0.65rem',
+                    letterSpacing: '0.15em',
+                    textTransform: 'uppercase',
+                    color: 'var(--text-muted)',
+                  }}>
+                    Resize & Compress
+                  </p>
+
+                  {/* Dimension presets */}
+                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                    {DIMENSION_PRESETS.map((preset) => (
+                      <button
+                        key={preset.value}
+                        onClick={() => setMaxDimension(preset.value)}
+                        style={{
+                          padding: '0.3rem 0.6rem',
+                          borderRadius: '6px',
+                          border: `1px solid ${maxDimension === preset.value ? 'var(--gold)' : 'var(--border)'}`,
+                          background: maxDimension === preset.value ? 'rgba(201,168,76,0.12)' : 'transparent',
+                          color: maxDimension === preset.value ? 'var(--gold-light)' : 'var(--text-muted)',
+                          fontSize: '0.7rem',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          letterSpacing: '0.02em',
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Quality slider */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Quality</span>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={quality}
+                      onChange={(e) => setQuality(Number(e.target.value))}
+                      style={{
+                        flex: 1,
+                        accentColor: 'var(--gold)',
+                        height: '2px',
+                      }}
+                    />
+                    <span style={{
+                      fontSize: '0.72rem',
+                      color: 'var(--gold-light)',
+                      fontFamily: 'Menlo, Monaco, monospace',
+                      minWidth: '2.5rem',
+                      textAlign: 'right',
+                    }}>
+                      {quality}%
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Expiry selector */}
               <div style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '0.75rem 1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                padding: '0.7rem 1rem',
+                background: 'rgba(255,255,255,0.025)',
+                borderRadius: '10px',
+                border: '1px solid var(--border)',
+                marginBottom: '1rem',
+              }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', letterSpacing: '0.06em' }}>
+                  Auto-delete
+                </span>
+                <select
+                  value={expiry}
+                  onChange={(e) => setExpiry(e.target.value)}
+                  style={{
+                    marginLeft: 'auto',
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '6px',
+                    color: 'var(--gold-light)',
+                    padding: '0.3rem 0.5rem',
+                    fontSize: '0.72rem',
+                    cursor: 'pointer',
+                    outline: 'none',
+                  }}
+                >
+                  {EXPIRY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* File summary */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '0.6rem 1rem',
                 background: 'rgba(255,255,255,0.03)',
                 borderRadius: '8px',
                 border: '1px solid var(--border)',
                 marginBottom: '1.25rem',
               }}>
-                <div>
-                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text)', fontWeight: 400, maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {file.name}
-                  </p>
-                  <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    {formatBytes(file.size)} · {file.type.split('/')[1].toUpperCase()}
-                  </p>
-                </div>
-                <div style={{ color: 'var(--gold)', opacity: 0.8 }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <rect x="3" y="3" width="18" height="18" rx="2" />
-                    <circle cx="8.5" cy="8.5" r="1.5" />
-                    <polyline points="21 15 16 10 5 21" />
-                  </svg>
-                </div>
+                <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text)', fontWeight: 400 }}>
+                  {files.length} {files.length === 1 ? 'image' : 'images'}
+                  {files.length > 1 && <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}> · gallery</span>}
+                </p>
+                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  {formatBytes(files.reduce((sum, e) => sum + (e.resizedFile?.size ?? e.file.size), 0))} total
+                </p>
               </div>
 
               {/* Upload button */}
@@ -249,7 +697,7 @@ function UploadPage() {
                       borderRadius: '50%',
                       animation: 'spin 0.7s linear infinite',
                     }} />
-                    Uploading…
+                    Uploading {uploadProgress.current}/{uploadProgress.total}…
                   </>
                 ) : (
                   <>
@@ -258,15 +706,47 @@ function UploadPage() {
                       <polyline points="17 8 12 3 7 8" />
                       <line x1="12" y1="3" x2="12" y2="15" />
                     </svg>
-                    Upload Image
+                    Upload {files.length === 1 ? 'Image' : `${files.length} Images`}
                   </>
                 )}
               </button>
 
               {uploading && (
                 <div style={{ marginTop: '0.75rem', height: '2px', borderRadius: '1px', background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
-                  <div className="progress-bar" style={{ height: '100%', width: '100%' }} />
+                  <div style={{
+                    height: '100%',
+                    width: `${(uploadProgress.current / uploadProgress.total) * 100}%`,
+                    background: 'var(--gold)',
+                    transition: 'width 0.3s ease',
+                  }} />
                 </div>
+              )}
+
+              {/* Clear all */}
+              {!uploading && files.length > 1 && (
+                <button
+                  onClick={() => {
+                    files.forEach((e) => URL.revokeObjectURL(e.preview))
+                    setFiles([])
+                    setError(null)
+                  }}
+                  style={{
+                    display: 'block',
+                    margin: '0.8rem auto 0',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    fontSize: '0.7rem',
+                    cursor: 'pointer',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    transition: 'color 0.2s ease',
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.color = '#f08080')}
+                  onMouseOut={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                >
+                  Clear All
+                </button>
               )}
             </>
           )}

@@ -14,12 +14,22 @@ export const Route = createFileRoute('/api/image/$imageId')({
         }
 
         const { data, metadata } = result
-        const mimeType = (metadata as Record<string, string>).mimeType ?? 'image/jpeg'
+        const meta = metadata as Record<string, string>
+
+        // Check expiry — lazy delete if expired
+        if (meta.expiresAt && new Date(meta.expiresAt) < new Date()) {
+          await store.delete(imageId)
+          return new Response('Image has expired', { status: 410 })
+        }
+
+        const mimeType = meta.mimeType ?? 'image/jpeg'
 
         return new Response(data as ArrayBuffer, {
           headers: {
             'Content-Type': mimeType,
-            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Cache-Control': meta.expiresAt
+              ? 'public, max-age=3600'
+              : 'public, max-age=31536000, immutable',
           },
         })
       },

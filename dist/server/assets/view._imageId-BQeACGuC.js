@@ -1,7 +1,8 @@
 import { jsxs, jsx } from "react/jsx-runtime";
 import { Link } from "@tanstack/react-router";
 import { useState, useRef, useEffect } from "react";
-import { R as Route } from "./router-CAfpMXmT.js";
+import { R as Route } from "./router-BgarmacZ.js";
+import "zod";
 import "@netlify/blobs";
 function ViewPage() {
   const {
@@ -15,6 +16,33 @@ function ViewPage() {
   const [imgError, setImgError] = useState(false);
   const [autoCopied, setAutoCopied] = useState(false);
   const imgRef = useRef(null);
+  const {
+    expiresAt
+  } = Route.useSearch();
+  const [timeLeft, setTimeLeft] = useState(null);
+  useEffect(() => {
+    if (!expiresAt) return;
+    const update = () => {
+      const diff = new Date(expiresAt).getTime() - Date.now();
+      if (diff <= 0) {
+        setTimeLeft("Expired");
+        return;
+      }
+      const hours = Math.floor(diff / (1e3 * 60 * 60));
+      const minutes = Math.floor(diff % (1e3 * 60 * 60) / (1e3 * 60));
+      if (hours > 24) {
+        const days = Math.floor(hours / 24);
+        setTimeLeft(`${days}d ${hours % 24}h`);
+      } else if (hours > 0) {
+        setTimeLeft(`${hours}h ${minutes}m`);
+      } else {
+        setTimeLeft(`${minutes}m`);
+      }
+    };
+    update();
+    const interval = setInterval(update, 6e4);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
   useEffect(() => {
     if (imgRef.current?.complete) {
       setLoaded(true);
@@ -99,7 +127,26 @@ function ViewPage() {
           letterSpacing: "0.2em",
           textTransform: "uppercase",
           marginTop: "0.3rem"
-        }, children: "Image Hosted" })
+        }, children: "Image Hosted" }),
+        timeLeft && /* @__PURE__ */ jsxs("div", { style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.4rem",
+          padding: "0.35rem 0.85rem",
+          borderRadius: "20px",
+          background: timeLeft === "Expired" ? "rgba(220,80,80,0.12)" : "rgba(201,168,76,0.1)",
+          border: `1px solid ${timeLeft === "Expired" ? "rgba(220,80,80,0.3)" : "var(--gold-dim)"}`,
+          marginTop: "0.75rem",
+          fontSize: "0.72rem",
+          letterSpacing: "0.06em",
+          color: timeLeft === "Expired" ? "#f08080" : "var(--gold-light)"
+        }, children: [
+          /* @__PURE__ */ jsxs("svg", { width: "12", height: "12", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+            /* @__PURE__ */ jsx("circle", { cx: "12", cy: "12", r: "10" }),
+            /* @__PURE__ */ jsx("polyline", { points: "12 6 12 12 16 14" })
+          ] }),
+          timeLeft === "Expired" ? "This image has expired" : `Expires in ${timeLeft}`
+        ] })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "glass-card", style: {
         borderRadius: "16px",
