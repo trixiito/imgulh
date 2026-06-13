@@ -1,7 +1,11 @@
 import { jsxs, jsx, Fragment } from "react/jsx-runtime";
 import { useRouter } from "@tanstack/react-router";
 import { useState, useRef, useCallback, useEffect } from "react";
-import { T as TSS_SERVER_FUNCTION, g as getServerFnById, c as createServerFn } from "../server.js";
+import { c as createSsrRpc } from "./router-xq-IyoU4.js";
+import { c as createServerFn } from "../server.js";
+import * as piexif from "piexifjs";
+import "zod";
+import "@netlify/blobs";
 import "node:async_hooks";
 import "h3-v2";
 import "@tanstack/router-core";
@@ -10,18 +14,6 @@ import "@tanstack/history";
 import "@tanstack/router-core/ssr/client";
 import "@tanstack/router-core/ssr/server";
 import "@tanstack/react-router/ssr/server";
-var createSsrRpc = (functionId) => {
-  const url = "/_serverFn/" + functionId;
-  const serverFnMeta = { id: functionId };
-  const fn = async (...args) => {
-    return (await getServerFnById(functionId))(...args);
-  };
-  return Object.assign(fn, {
-    url,
-    serverFnMeta,
-    [TSS_SERVER_FUNCTION]: true
-  });
-};
 const uploadImage = createServerFn({
   method: "POST"
 }).inputValidator((data) => data).handler(createSsrRpc("5635624367d233733180912069d9ac2b3bed471b154b0d0d8f4275bbdb0c2cae"));
@@ -56,6 +48,35 @@ function formatBytes(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+async function stripExif(file) {
+  if (file.type !== "image/jpeg") return file;
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const dataUrl = e.target?.result;
+        const strippedDataUrl = piexif.remove(dataUrl);
+        const arr = strippedDataUrl.split(",");
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        resolve(new File([u8arr], file.name, {
+          type: mime
+        }));
+      } catch (error) {
+        console.error("Failed to strip EXIF:", error);
+        resolve(file);
+      }
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
 function UploadPage() {
   const router = useRouter();
   const [dragging, setDragging] = useState(false);
@@ -63,6 +84,7 @@ function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [expiry, setExpiry] = useState("never");
+  const [removeExif, setRemoveExif] = useState(true);
   const [uploadProgress, setUploadProgress] = useState({
     current: 0,
     total: 0
@@ -153,7 +175,7 @@ function UploadPage() {
           };
           return copy;
         });
-        const fileToUpload = files[i].file;
+        const fileToUpload = removeExif ? await stripExif(files[i].file) : files[i].file;
         const formData = new FormData();
         formData.append("file", fileToUpload);
         formData.append("expiry", expiry);
@@ -439,6 +461,57 @@ function UploadPage() {
               cursor: "pointer",
               outline: "none"
             }, children: EXPIRY_OPTIONS.map((opt) => /* @__PURE__ */ jsx("option", { value: opt.value, children: opt.label }, opt.value)) })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "0.6rem",
+            padding: "0.7rem 1rem",
+            background: "rgba(255,255,255,0.025)",
+            borderRadius: "10px",
+            border: "1px solid var(--border)",
+            marginBottom: "1rem",
+            cursor: "pointer"
+          }, onClick: () => setRemoveExif(!removeExif), children: [
+            /* @__PURE__ */ jsxs("svg", { width: "14", height: "14", viewBox: "0 0 24 24", fill: "none", stroke: "var(--text-muted)", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round", style: {
+              flexShrink: 0
+            }, children: [
+              /* @__PURE__ */ jsx("path", { d: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" }),
+              removeExif && /* @__PURE__ */ jsx("polyline", { points: "9 12 11 14 15 10" })
+            ] }),
+            /* @__PURE__ */ jsxs("div", { style: {
+              display: "flex",
+              flexDirection: "column"
+            }, children: [
+              /* @__PURE__ */ jsx("span", { style: {
+                fontSize: "0.72rem",
+                color: "var(--text)",
+                letterSpacing: "0.06em"
+              }, children: "Strip Metadata (Privacy)" }),
+              /* @__PURE__ */ jsx("span", { style: {
+                fontSize: "0.55rem",
+                color: "var(--text-muted)"
+              }, children: "Removes GPS & camera info from JPEGs" })
+            ] }),
+            /* @__PURE__ */ jsx("div", { style: {
+              marginLeft: "auto",
+              width: "32px",
+              height: "18px",
+              background: removeExif ? "var(--gold)" : "rgba(0,0,0,0.5)",
+              borderRadius: "9px",
+              position: "relative",
+              transition: "background 0.2s ease",
+              border: "1px solid var(--border)"
+            }, children: /* @__PURE__ */ jsx("div", { style: {
+              width: "14px",
+              height: "14px",
+              background: removeExif ? "#080810" : "var(--text-muted)",
+              borderRadius: "50%",
+              position: "absolute",
+              top: "1px",
+              left: removeExif ? "15px" : "1px",
+              transition: "left 0.2s ease, background 0.2s ease"
+            } }) })
           ] }),
           /* @__PURE__ */ jsxs("div", { style: {
             display: "flex",

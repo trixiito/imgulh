@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { getStore } from '@netlify/blobs'
+import { incrementViews } from '../../../server/stats.functions'
 
 export const Route = createFileRoute('/api/image/$imageId')({
   server: {
@@ -23,6 +24,8 @@ export const Route = createFileRoute('/api/image/$imageId')({
         }
 
         const mimeType = meta.mimeType ?? 'image/jpeg'
+
+        incrementViews(imageId).catch(console.error)
 
         return new Response(data as ArrayBuffer, {
           headers: {

@@ -1,9 +1,18 @@
 import { jsxs, jsx } from "react/jsx-runtime";
 import { Link } from "@tanstack/react-router";
 import { useState, useRef, useEffect } from "react";
-import { R as Route } from "./router-CpN010EQ.js";
+import { R as Route } from "./router-xq-IyoU4.js";
 import "zod";
 import "@netlify/blobs";
+import "../server.js";
+import "node:async_hooks";
+import "h3-v2";
+import "@tanstack/router-core";
+import "seroval";
+import "@tanstack/history";
+import "@tanstack/router-core/ssr/client";
+import "@tanstack/router-core/ssr/server";
+import "@tanstack/react-router/ssr/server";
 function ViewPage() {
   const {
     imageId

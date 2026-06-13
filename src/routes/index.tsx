@@ -1,6 +1,7 @@
 import { createFileRoute, useRouter } from '@tanstack/react-router'
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { uploadImage, createGallery } from '@/server/images.functions'
+import * as piexif from 'piexifjs'
 
 export const Route = createFileRoute('/')({
   component: UploadPage,
@@ -37,6 +38,37 @@ interface FileEntry {
   error?: string
 }
 
+async function stripExif(file: File): Promise<File> {
+  if (file.type !== 'image/jpeg') return file
+
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const dataUrl = e.target?.result as string
+        const strippedDataUrl = piexif.remove(dataUrl)
+
+        // Convert data URL back to File
+        const arr = strippedDataUrl.split(',')
+        const mimeMatch = arr[0].match(/:(.*?);/)
+        const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg'
+        const bstr = atob(arr[1])
+        let n = bstr.length
+        const u8arr = new Uint8Array(n)
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n)
+        }
+        resolve(new File([u8arr], file.name, { type: mime }))
+      } catch (error) {
+        console.error('Failed to strip EXIF:', error)
+        resolve(file) // Fallback to original if stripping fails
+      }
+    }
+    reader.onerror = () => resolve(file)
+    reader.readAsDataURL(file)
+  })
+}
+
 function UploadPage() {
   const router = useRouter()
   const [dragging, setDragging] = useState(false)
@@ -44,6 +76,7 @@ function UploadPage() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expiry, setExpiry] = useState('never')
+  const [removeExif, setRemoveExif] = useState(true)
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 })
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -133,7 +166,7 @@ function UploadPage() {
           return copy
         })
 
-        const fileToUpload = files[i].file
+        const fileToUpload = removeExif ? await stripExif(files[i].file) : files[i].file
         const formData = new FormData()
         formData.append('file', fileToUpload)
         formData.append('expiry', expiry)
@@ -452,6 +485,57 @@ function UploadPage() {
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Exif Stripper Toggle */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.6rem',
+                padding: '0.7rem 1rem',
+                background: 'rgba(255,255,255,0.025)',
+                borderRadius: '10px',
+                border: '1px solid var(--border)',
+                marginBottom: '1rem',
+                cursor: 'pointer',
+              }}
+              onClick={() => setRemoveExif(!removeExif)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                  {removeExif && <polyline points="9 12 11 14 15 10" />}
+                </svg>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text)', letterSpacing: '0.06em' }}>
+                    Strip Metadata (Privacy)
+                  </span>
+                  <span style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>
+                    Removes GPS & camera info from JPEGs
+                  </span>
+                </div>
+                
+                {/* Custom Toggle Switch */}
+                <div style={{
+                  marginLeft: 'auto',
+                  width: '32px',
+                  height: '18px',
+                  background: removeExif ? 'var(--gold)' : 'rgba(0,0,0,0.5)',
+                  borderRadius: '9px',
+                  position: 'relative',
+                  transition: 'background 0.2s ease',
+                  border: '1px solid var(--border)'
+                }}>
+                  <div style={{
+                    width: '14px',
+                    height: '14px',
+                    background: removeExif ? '#080810' : 'var(--text-muted)',
+                    borderRadius: '50%',
+                    position: 'absolute',
+                    top: '1px',
+                    left: removeExif ? '15px' : '1px',
+                    transition: 'left 0.2s ease, background 0.2s ease'
+                  }} />
+                </div>
               </div>
 
               {/* File summary */}

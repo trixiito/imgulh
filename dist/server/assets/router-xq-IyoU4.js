@@ -2,6 +2,7 @@ import { createRootRoute, HeadContent, Scripts, createFileRoute, lazyRouteCompon
 import { jsxs, jsx } from "react/jsx-runtime";
 import { z } from "zod";
 import { getStore } from "@netlify/blobs";
+import { T as TSS_SERVER_FUNCTION, g as getServerFnById, c as createServerFn } from "../server.js";
 const Route$5 = createRootRoute({
   head: () => ({
     meta: [
@@ -37,21 +38,54 @@ function RootDocument({ children }) {
     ] })
   ] });
 }
-const $$splitComponentImporter$2 = () => import("./index-p1GXugzX.js");
+const $$splitComponentImporter$2 = () => import("./index-Cdk3hGMM.js");
 const Route$4 = createFileRoute("/")({
   component: lazyRouteComponent($$splitComponentImporter$2, "component")
 });
-const $$splitComponentImporter$1 = () => import("./view._imageId-DH7UlixN.js");
+const $$splitComponentImporter$1 = () => import("./view._imageId-DJA-hzj8.js");
 const Route$3 = createFileRoute("/view/$imageId")({
   component: lazyRouteComponent($$splitComponentImporter$1, "component"),
   validateSearch: z.object({
     expiresAt: z.string().optional()
   })
 });
-const $$splitComponentImporter = () => import("./gallery._galleryId-CEEt1MyU.js");
+const $$splitComponentImporter = () => import("./gallery._galleryId-DpddYMy0.js");
 const Route$2 = createFileRoute("/gallery/$galleryId")({
   component: lazyRouteComponent($$splitComponentImporter, "component")
 });
+var createSsrRpc = (functionId) => {
+  const url = "/_serverFn/" + functionId;
+  const serverFnMeta = { id: functionId };
+  const fn = async (...args) => {
+    return (await getServerFnById(functionId))(...args);
+  };
+  return Object.assign(fn, {
+    url,
+    serverFnMeta,
+    [TSS_SERVER_FUNCTION]: true
+  });
+};
+createServerFn({
+  method: "GET"
+}).inputValidator((data) => data).handler(createSsrRpc("b5c2994279aaf6c925d686e809e9f3893bbba4a55b0dfa5e7fe7e981818eff7a"));
+async function incrementViews(imageId) {
+  const store = getStore("stats");
+  const raw = await store.get(imageId);
+  let views = 0;
+  if (raw) {
+    try {
+      const stats = JSON.parse(raw);
+      if (typeof stats.views === "number") {
+        views = stats.views;
+      }
+    } catch {
+    }
+  }
+  views += 1;
+  await store.set(imageId, JSON.stringify({
+    views
+  }));
+}
 const Route$1 = createFileRoute("/api/image/$imageId")({
   server: {
     handlers: {
@@ -69,6 +103,7 @@ const Route$1 = createFileRoute("/api/image/$imageId")({
           return new Response("Image has expired", { status: 410 });
         }
         const mimeType = meta.mimeType ?? "image/jpeg";
+        incrementViews(imageId).catch(console.error);
         return new Response(data, {
           headers: {
             "Content-Type": mimeType,
@@ -147,5 +182,6 @@ const router = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
 export {
   Route$3 as R,
   Route$2 as a,
+  createSsrRpc as c,
   router as r
 };

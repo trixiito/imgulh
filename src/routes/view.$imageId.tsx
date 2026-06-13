@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { z } from 'zod'
 import { useState, useEffect, useRef } from 'react'
+import { getImageStats } from '../server/stats.functions'
 
 export const Route = createFileRoute('/view/$imageId')({
   component: ViewPage,
@@ -22,6 +23,13 @@ function ViewPage() {
   const imgRef = useRef<HTMLImageElement>(null)
   const { expiresAt } = Route.useSearch()
   const [timeLeft, setTimeLeft] = useState<string | null>(null)
+  const [views, setViews] = useState<number | null>(null)
+
+  useEffect(() => {
+    getImageStats({ data: imageId })
+      .then((res) => setViews(res.views))
+      .catch(console.error)
+  }, [imageId])
 
   useEffect(() => {
     if (!expiresAt) return
@@ -220,6 +228,19 @@ function ViewPage() {
 
           {/* Links panel */}
           <div style={{ padding: '1.5rem' }}>
+            {/* Stats Header */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-muted)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span style={{ fontSize: '0.75rem', letterSpacing: '0.05em' }}>
+                  {views !== null ? `${views} view${views === 1 ? '' : 's'}` : '...'}
+                </span>
+              </div>
+            </div>
+
             {/* Divider */}
             <div style={{ height: '1px', background: 'var(--border)', marginBottom: '1.5rem' }} />
 
