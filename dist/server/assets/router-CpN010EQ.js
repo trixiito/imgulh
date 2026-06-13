@@ -37,18 +37,18 @@ function RootDocument({ children }) {
     ] })
   ] });
 }
-const $$splitComponentImporter$2 = () => import("./index-DMu73yvA.js");
+const $$splitComponentImporter$2 = () => import("./index-p1GXugzX.js");
 const Route$4 = createFileRoute("/")({
   component: lazyRouteComponent($$splitComponentImporter$2, "component")
 });
-const $$splitComponentImporter$1 = () => import("./view._imageId-BQeACGuC.js");
+const $$splitComponentImporter$1 = () => import("./view._imageId-DH7UlixN.js");
 const Route$3 = createFileRoute("/view/$imageId")({
   component: lazyRouteComponent($$splitComponentImporter$1, "component"),
   validateSearch: z.object({
     expiresAt: z.string().optional()
   })
 });
-const $$splitComponentImporter = () => import("./gallery._galleryId-CzyF9A-g.js");
+const $$splitComponentImporter = () => import("./gallery._galleryId-CEEt1MyU.js");
 const Route$2 = createFileRoute("/gallery/$galleryId")({
   component: lazyRouteComponent($$splitComponentImporter, "component")
 });

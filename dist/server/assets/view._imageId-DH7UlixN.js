@@ -1,7 +1,7 @@
 import { jsxs, jsx } from "react/jsx-runtime";
 import { Link } from "@tanstack/react-router";
 import { useState, useRef, useEffect } from "react";
-import { R as Route } from "./router-BgarmacZ.js";
+import { R as Route } from "./router-CpN010EQ.js";
 import "zod";
 import "@netlify/blobs";
 function ViewPage() {

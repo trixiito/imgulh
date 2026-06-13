@@ -1,7 +1,7 @@
 import { jsxs, jsx, Fragment } from "react/jsx-runtime";
 import { Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { a as Route } from "./router-BgarmacZ.js";
+import { a as Route } from "./router-CpN010EQ.js";
 import "zod";
 import "@netlify/blobs";
 function GalleryPage() {

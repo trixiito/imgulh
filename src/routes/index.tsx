@@ -7,7 +7,6 @@ export const Route = createFileRoute('/')({
 })
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml']
-const RESIZABLE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif']
 
 const EXPIRY_OPTIONS = [
   { value: 'never', label: 'Never' },
@@ -24,14 +23,6 @@ const EXPIRY_DURATIONS: Record<string, number> = {
   '30d': 30 * 24 * 60 * 60 * 1000,
 }
 
-const DIMENSION_PRESETS = [
-  { value: 0, label: 'Original' },
-  { value: 1920, label: '1920px' },
-  { value: 1280, label: '1280px' },
-  { value: 800, label: '800px' },
-  { value: 480, label: '480px' },
-]
-
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -44,83 +35,6 @@ interface FileEntry {
   id?: string // set after upload
   status: 'pending' | 'uploading' | 'done' | 'error'
   error?: string
-  resizedFile?: File
-  resizedSize?: number
-}
-
-function resizeImage(
-  file: File,
-  maxDimension: number,
-  quality: number
-): Promise<File> {
-  return new Promise((resolve, reject) => {
-    if (!RESIZABLE_TYPES.includes(file.type)) {
-      resolve(file)
-      return
-    }
-
-    const img = new Image()
-    const url = URL.createObjectURL(file)
-
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-
-      let { width, height } = img
-
-      // Skip if no resize needed
-      if (maxDimension === 0 && quality >= 100) {
-        resolve(file)
-        return
-      }
-
-      // Scale down if maxDimension is set
-      if (maxDimension > 0 && (width > maxDimension || height > maxDimension)) {
-        if (width > height) {
-          height = Math.round((height / width) * maxDimension)
-          width = maxDimension
-        } else {
-          width = Math.round((width / height) * maxDimension)
-          height = maxDimension
-        }
-      }
-
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        resolve(file)
-        return
-      }
-
-      ctx.drawImage(img, 0, 0, width, height)
-
-      // Output as original type for JPEG/WebP (quality applies), PNG for others
-      const outputType = (file.type === 'image/jpeg' || file.type === 'image/webp')
-        ? file.type
-        : 'image/png'
-
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            resolve(file)
-            return
-          }
-          const resized = new File([blob], file.name, { type: blob.type })
-          resolve(resized)
-        },
-        outputType,
-        quality / 100
-      )
-    }
-
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('Failed to load image for resizing'))
-    }
-
-    img.src = url
-  })
 }
 
 function UploadPage() {
@@ -130,8 +44,6 @@ function UploadPage() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [expiry, setExpiry] = useState('never')
-  const [maxDimension, setMaxDimension] = useState(0)
-  const [quality, setQuality] = useState(85)
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 })
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -198,40 +110,6 @@ function UploadPage() {
     return () => document.removeEventListener('paste', onPaste)
   }, [addFiles])
 
-  // Apply resize when settings change
-  useEffect(() => {
-    if (files.length === 0) return
-    if (maxDimension === 0 && quality >= 100) {
-      // Clear any resized files
-      setFiles((prev) => prev.map((e) => ({ ...e, resizedFile: undefined, resizedSize: undefined })))
-      return
-    }
-
-    let cancelled = false
-
-    const processAll = async () => {
-      for (let i = 0; i < files.length; i++) {
-        if (cancelled) return
-        if (!RESIZABLE_TYPES.includes(files[i].file.type)) continue
-        try {
-          const resized = await resizeImage(files[i].file, maxDimension, quality)
-          if (cancelled) return
-          setFiles((prev) => {
-            const copy = [...prev]
-            if (copy[i]) {
-              copy[i] = { ...copy[i], resizedFile: resized, resizedSize: resized.size }
-            }
-            return copy
-          })
-        } catch {
-          // skip resize errors
-        }
-      }
-    }
-
-    processAll()
-    return () => { cancelled = true }
-  }, [maxDimension, quality, files.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpload = async () => {
     if (files.length === 0) return
@@ -255,7 +133,7 @@ function UploadPage() {
           return copy
         })
 
-        const fileToUpload = files[i].resizedFile ?? files[i].file
+        const fileToUpload = files[i].file
         const formData = new FormData()
         formData.append('file', fileToUpload)
         formData.append('expiry', expiry)
@@ -304,9 +182,7 @@ function UploadPage() {
     }
   }
 
-  const hasResizableFiles = files.some((e) => RESIZABLE_TYPES.includes(e.file.type))
-  const showResizeControls = files.length > 0 && hasResizableFiles
-  const isResizing = maxDimension > 0 || quality < 100
+
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center px-4 py-16">
@@ -490,9 +366,7 @@ function UploadPage() {
                       fontSize: '0.6rem',
                       color: 'var(--text-muted)',
                     }}>
-                      {isResizing && entry.resizedSize
-                        ? <><span style={{ textDecoration: 'line-through', opacity: 0.6 }}>{formatBytes(entry.file.size)}</span> → <span style={{ color: 'var(--gold-light)' }}>{formatBytes(entry.resizedSize)}</span></>
-                        : formatBytes(entry.file.size)}
+                      {formatBytes(entry.file.size)}
                     </div>
                   </div>
                 ))}
@@ -540,76 +414,6 @@ function UploadPage() {
                 }}
               />
 
-              {/* Resize controls */}
-              {showResizeControls && !uploading && (
-                <div style={{
-                  padding: '0.85rem 1rem',
-                  background: 'rgba(255,255,255,0.025)',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border)',
-                  marginBottom: '1rem',
-                }}>
-                  <p style={{
-                    margin: '0 0 0.7rem',
-                    fontSize: '0.65rem',
-                    letterSpacing: '0.15em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-muted)',
-                  }}>
-                    Resize & Compress
-                  </p>
-
-                  {/* Dimension presets */}
-                  <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                    {DIMENSION_PRESETS.map((preset) => (
-                      <button
-                        key={preset.value}
-                        onClick={() => setMaxDimension(preset.value)}
-                        style={{
-                          padding: '0.3rem 0.6rem',
-                          borderRadius: '6px',
-                          border: `1px solid ${maxDimension === preset.value ? 'var(--gold)' : 'var(--border)'}`,
-                          background: maxDimension === preset.value ? 'rgba(201,168,76,0.12)' : 'transparent',
-                          color: maxDimension === preset.value ? 'var(--gold-light)' : 'var(--text-muted)',
-                          fontSize: '0.7rem',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          letterSpacing: '0.02em',
-                        }}
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Quality slider */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Quality</span>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      step="5"
-                      value={quality}
-                      onChange={(e) => setQuality(Number(e.target.value))}
-                      style={{
-                        flex: 1,
-                        accentColor: 'var(--gold)',
-                        height: '2px',
-                      }}
-                    />
-                    <span style={{
-                      fontSize: '0.72rem',
-                      color: 'var(--gold-light)',
-                      fontFamily: 'Menlo, Monaco, monospace',
-                      minWidth: '2.5rem',
-                      textAlign: 'right',
-                    }}>
-                      {quality}%
-                    </span>
-                  </div>
-                </div>
-              )}
 
               {/* Expiry selector */}
               <div style={{
@@ -666,7 +470,7 @@ function UploadPage() {
                   {files.length > 1 && <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}> · gallery</span>}
                 </p>
                 <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  {formatBytes(files.reduce((sum, e) => sum + (e.resizedFile?.size ?? e.file.size), 0))} total
+                  {formatBytes(files.reduce((sum, e) => sum + e.file.size, 0))} total
                 </p>
               </div>
 
